@@ -170,5 +170,38 @@ coef_table <- summary(logit_model)$coefficients
 signif_vars <- rownames(coef_table)[coef_table[,4] < 0.05]
 signif_vars
 
-# 2) Lasso Logistic Regression 
+# 2) lasso Logistic Regression 
 
+# Uses k-folds validation internally so we don't need to split into test and training data sets
+X <- model.matrix(is_delayed ~ ., data = data_filtered_reduced)[, -1]  
+y <- data_filtered_reduced$is_delayed
+
+# Hyper-parameter optimization 
+cv_lasso <- cv.glmnet(X, y, family = "binomial", alpha = 1, nfolds = 5)
+
+# Use lambda.1se for a sparse model
+best_lambda <- cv_lasso$lambda.min
+lasso_model <- glmnet(X, y, family = "binomial", alpha = 1, lambda = best_lambda)
+
+# Now we can split the data into training and testing sets 
+
+train_ind <- sample(nrow(data_filtered_reduced), size = 0.7*nrow(data_filtered_reduced))
+train_lasso_data <- data_filtered_reduced[train_ind,]
+test_lasso_data <- data_filtered_reduced[-train_ind,]
+
+X_train <- model.matrix(is_delayed ~ ., train_lasso_data)[, -1]
+y_train <- train_lasso_data$is_delayed
+
+X_test  <- model.matrix(is_delayed ~ ., test_lasso_data)[, -1]
+y_test  <- test_lasso_data$is_delayed
+
+# Fitting the lasso model 
+
+y_pred_prob <- predict(lasso_model, newx = X_test, type = "response")
+y_pred_class <- ifelse(y_pred_prob >= 0.5, 1, 0)
+
+# Confusion Matrix
+y_test_factor <- factor(y_test, levels = c(0,1))
+y_pred_factor <- factor(y_pred_class, levels = c(0,1))
+
+confusionMatrix(y_pred_factor, y_test_factor)
