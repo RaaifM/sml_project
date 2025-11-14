@@ -150,18 +150,33 @@ test_l_data$pred <- predict(logit_model, test_l_data, type = "response")
 summary(logit_model)
 
 # Prediction classes
-
 test_l_data$pred_class <- ifelse(test_l_data$pred >=0.5,1,0)
   
+# Ensure the predication and delay column are factors 
+test_l_data$pred_class <- factor(test_l_data$pred_class , levels = c("0","1"))
+test_l_data$is_delayed <- factor(test_l_data$is_delayed , levels = c("0","1"))
+
 # Confusion matrix 
+cm <- caret::confusionMatrix(data = test_l_data$pred_class, 
+                       reference = test_l_data$is_delay, 
+                       positive = "1")
+acc <- cm$overall['Accuracy']
+sens <- cm$byClass['Sensitivity']
+spec <- cm$byClass['Specificity']
+f1 <- cm$byClass['F1']
 
-confusionMatrix(factor(test_l_data$pred_class), 
-                factor(test_l_data$is_delayed))
-table(train_l_data$is_delay)  
+# Accuracy = (TP + TN) / (TP + TN + FP + FN)
+# This is misleading for imbalanced data 
+acc
 
-# AIC
+# Sensitivity (Recall): TP / (TP + FN)
+sens
 
-AIC(logit_model)
+# Specificity (True Negative Rate (TNR)): TN / (TN + FP)
+spec
+
+# F1
+f1
 
 # Significant factors 
 
@@ -170,7 +185,133 @@ coef_table <- summary(logit_model)$coefficients
 signif_vars <- rownames(coef_table)[coef_table[,4] < 0.05]
 signif_vars
 
-# 2) lasso Logistic Regression 
+# 2) Weighted Logistic model 
+
+train_ind <- sample(nrow(data_filtered_reduced), size = 0.7*nrow(data_filtered_reduced))
+train_logit_w_data <- data_filtered_reduced[train_ind,]
+test_logit_w_data <- data_filtered_reduced[-train_ind,]
+
+# We are dealing with an imbalanced data set
+table(train_logit_w_data$is_delayed)/nrow(train_logit_w_data)
+
+# About 80% of observation are not-delayed (0) and 20% are delayed (1)
+
+# Creating class weights 
+
+class_weights <- ifelse(train_logit_w_data$is_delayed == "1", 4, 1)
+logit_weighted_model <- glm(is_delayed ~ ., 
+                 data = train_logit_w_data, 
+                 family = binomial(link = "logit"),
+                 weights = class_weights)
+
+test_logit_w_data$pred <- predict(logit_weighted_model, test_logit_w_data, type = "response")
+
+# Logistic Weighted Model Summary 
+summary(logit_weighted_model)
+
+# Prediction classes
+test_logit_w_data$pred_class <- ifelse(test_logit_w_data$pred >=0.5,1,0)
+
+# Ensure the predication and delay column are factors 
+test_logit_w_data$pred_class <- factor(test_logit_w_data$pred_class , levels = c("0","1"))
+test_logit_w_data$is_delayed <- factor(test_logit_w_data$is_delayed , levels = c("0","1"))
+
+# Confusion matrix 
+cm <- caret::confusionMatrix(data = test_logit_w_data$pred_class, 
+                             reference = test_logit_w_data$is_delay, 
+                             positive = "1")
+acc_logit_w <- cm$overall['Accuracy']
+sens_logit_w <- cm$byClass['Sensitivity']
+spec_logit_w <- cm$byClass['Specificity']
+f1_logit_w <- cm$byClass['F1']
+
+# Accuracy = (TP + TN) / (TP + TN + FP + FN)
+# This is misleading for imbalanced data 
+acc_logit_w
+
+# Sensitivity (Recall): TP / (TP + FN)
+sens_logit_w
+
+# Specificity (True Negative Rate (TNR)): TN / (TN + FP)
+spec_logit_w
+
+# F1
+f1_logit_w
+
+# We get an over-all higher f1 score 
+
+# 3) Weighted Lasso Regression Model 
+
+train_ind <- sample(nrow(data_filtered_reduced), size = 0.7*nrow(data_filtered_reduced))
+train_lasso_w_data <- data_filtered_reduced[train_ind,]
+test_lasso_w_data <- data_filtered_reduced[-train_ind,]
+
+class_weights <- ifelse(train_lasso_w_data$is_delayed == "1", 4, 1)
+
+# Creating the design matrix (x_train) and response (y_train)
+x_train <- model.matrix(is_delayed ~ ., data = train_lasso_w_data)[, -1]
+y_train <- train_lasso_w_data$is_delay
+
+# Hyper-parameter optimization: Running cross-validation to find the best Lambda 
+cv_lasso_w_model <- cv.glmnet(x_train, y_train,
+                            family = "binomial",
+                            alpha = 1,
+                            weights = class_weights)
+
+# Plot 
+plot(cv_lasso_w_model)
+
+# Choosing the best lambda 
+best_lambda <- cv_lasso_w_model$lambda.1se
+coef(cv_lasso_w_model, s = best_lambda)
+
+# All the coefficients with non-zero coefficients 
+all_coefs_matrix <- as.matrix(coef(cv_lasso_w_model, s = best_lambda))
+non_zero_coefs <- all_coefs_matrix[all_coefs_matrix[, 1] != 0,]
+length(non_zero_coefs)
+
+# Top 5 factors with the highest coefficients 
+sorted_features <- non_zero_coefs[order(abs(non_zero_coefs), decreasing = TRUE)]
+top_5_features <- head(sorted_features, 5)
+top_5_features
+
+# Making prediction using the cv_lasso_w_model 
+
+x_test <- model.matrix(is_delayed ~ ., data = test_lasso_w_data)[, -1]
+lasso_preds_class <- predict(cv_lasso_w_model, 
+                             newx = x_test, 
+                             s = best_lambda, 
+                             type = "class")
+
+factor_levels <- c("0", "1")
+
+preds_factor <- factor(lasso_preds_class[, 1], levels = factor_levels)
+ref_factor <- factor(test_lasso_w_data$is_delayed, levels = factor_levels)
+
+# Confusion matrix 
+cm_lasso <- caret::confusionMatrix(data = preds_factor, 
+                                   reference = ref_factor, 
+                                   positive = "1")
+
+acc_lasso_w <- cm_lasso$overall['Accuracy']
+sens_lasso_w <- cm_lasso$byClass['Sensitivity']
+spec_lasso_w <- cm_lasso$byClass['Specificity']
+f1_lasso_w <- cm_lasso$byClass['F1']
+
+# Accuracy = (TP + TN) / (TP + TN + FP + FN)
+# This is misleading for imbalanced data 
+acc_lasso_w
+
+# Sensitivity (Recall): TP / (TP + FN)
+sens_lasso_w
+
+# Specificity (True Negative Rate (TNR)): TN / (TN + FP)
+spec_lasso_w
+
+# F1
+f1_lasso_w
+
+# 4) lasso Logistic Regression 
 
 # Uses k-folds validation internally so we don't need to split into test and training data sets
 X <- model.matrix(is_delayed ~ ., data = data_filtered_reduced)[, -1]  
