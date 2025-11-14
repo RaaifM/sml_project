@@ -12,6 +12,7 @@ library("dplyr")
 library("caret")
 library("glmnet")
 library("rpart")
+library("rpart.plot")
 
 # 2) Reading the data
 
@@ -313,5 +314,74 @@ spec_lasso_w
 f1_lasso_w
 
 # 4) Single Classification Tree
+
+# Training and Testing data 
+train_ind <- sample(nrow(data_filtered_reduced), size = 0.7*nrow(data_filtered_reduced))
+train_tree_data <- data_filtered_reduced[train_ind,]
+test_tree_data <- data_filtered_reduced[-train_ind,]
+
+loss_matrix <- matrix(c(0, 1, 4, 0), byrow = TRUE, nrow = 2)
+
+# a) Overfit tree (cp = 0.001)
+
+full_tree <- rpart(is_delayed ~ ., 
+                   data = train_tree_data, 
+                   method = "class",
+                   parms = list(loss = loss_matrix),
+                   control = rpart.control(cp = 0.001)) 
+
+printcp(full_tree)
+plotcp(full_tree)
+
+# Starting with a very small cp (complexity parameter) this 
+# indicates the minimum amount of improvement that has to be done 
+# for the new split to be added in the model
+
+# b) Pruned-tree 
+
+# Hyper-parameter optimization 
+best_cp <- full_tree$cptable[which.min(full_tree$cptable[,"xerror"]), "CP"]
+best_cp
+
+# Now, we prune the tree using the best_cp
+# Now, "prune" the tree to that best size
+pruned_tree <- prune(full_tree, cp = best_cp)
+
+rpart.plot(pruned_tree, 
+           nn = TRUE,          
+           extra = 104)
+
+# Making predictions using the tree
+
+tree_preds <- predict(pruned_tree, 
+                      newdata = test_tree_data, 
+                      type = "class") 
+factor_levels <- c("0", "1")
+preds_factor <- factor(tree_preds, levels = factor_levels)
+ref_factor <- factor(test_tree_data$is_delayed, levels = factor_levels)
+
+# Confusion matrix 
+cm_tree <- caret::confusionMatrix(data = preds_factor, 
+                                  reference = ref_factor, 
+                                  positive = "1")
+cm_tree
+
+acc_tree<- cm_tree$overall['Accuracy']
+sens_tree <- cm_tree$byClass['Sensitivity']
+spec_tree <- cm_tree$byClass['Specificity']
+f1_tree <- cm_tree$byClass['F1']
+
+# Accuracy = (TP + TN) / (TP + TN + FP + FN)
+# This is misleading for imbalanced data 
+acc_tree
+
+# Sensitivity Correctly predict delays (Recall): TP / (TP + FN)
+sens_tree
+
+# Specificity Correctly predict on-time (True Negative Rate (TNR)): TN / (TN + FP)
+spec_tree
+
+# F1
+f1_tree
 
 
