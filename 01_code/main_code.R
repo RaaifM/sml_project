@@ -3,10 +3,14 @@
 
 # I) PRE-PROCESSING
 
+set.seed("123")
+
 # 1) Libraries 
 
 library("tibble")
 library("dplyr")
+library("caret")
+library("glmnet")
 
 # 2) Reading the data
 
@@ -75,7 +79,7 @@ data_filtered <- data_filtered %>%
 # Converting the month, day_of_month, day_of_week, op_unique_carrier, origin, dest into factors
 
 data_filtered$month <- factor(data_filtered$month)
-data_filtered$day_of_month <- factor(data_filtered$day_of_month)
+# data_filtered$day_of_month <- factor(data_filtered$day_of_month)
 data_filtered$day_of_week <- factor(data_filtered$day_of_week)
 data_filtered$op_unique_carrier <- factor(data_filtered$op_unique_carrier)
 data_filtered$origin <- factor(data_filtered$origin)
@@ -86,6 +90,44 @@ data_filtered$dest <- factor(data_filtered$dest)
 data_filtered <- data_filtered %>%
   select(-op_unique_carrier)
 
+# 9) The data is way too big (we don't want to work with 1M + rows)
+
+reduced_rows <- sample(nrow(data_filtered),20000)
+data_filtered_reduced <- data_filtered[reduced_rows,]
+
+# 10) drop all rows consisting of NA
+
+data_filtered_reduced <- na.omit(data_filtered_reduced)
+sum(is.na(data_filtered_reduced))
+
+# 11) We also have to drop departure delay because it is highly correlated to is_delay
+# We get warning in R for Quasi-complete separation 
+data_filtered_reduced <- data_filtered_reduced %>% 
+  select(-dep_delay)
+
+# 12) Since factors like month, and day give rise to a lot of categorical variables we group them logically
+# Handling the high-cardinality variables in the following way 
+
+data_filtered_reduced$season <- factor(
+  dplyr::case_when(
+    data_filtered_reduced$month %in% c(12,1,2)  ~ "Winter",
+    data_filtered_reduced$month %in% 3:5        ~ "Spring",
+    data_filtered_reduced$month %in% 6:8        ~ "Summer",
+    data_filtered_reduced$month %in% 9:11       ~ "Fall"
+  )
+)
+
+data_filtered_reduced$day_group <- factor(
+  dplyr::case_when(
+    data_filtered_reduced$day_of_month <= 10 ~ "Early",
+    data_filtered_reduced$day_of_month <= 20 ~ "Mid",
+    TRUE                        ~ "Late"
+  )
+)
+
+# Remove month, and day of month 
+data_filtered_reduced <- data_filtered_reduced %>%
+  select(-c("month","day_of_month","day_of_week"))
 
 # II) SUITABLE PREDICTIVE MODELS
 
@@ -93,16 +135,40 @@ data_filtered <- data_filtered %>%
 
 # Splitting the data into training and testing sets 
 
-train_ind <- sample(nrow(data_filtered), size = 0.7*nrow(data_filtered))
-train_l_data <- data_filtered[train_ind,]
-test_l_data <- data_filtered[-train_ind,]
+train_ind <- sample(nrow(data_filtered_reduced), size = 0.7*nrow(data_filtered_reduced))
+train_l_data <- data_filtered_reduced[train_ind,]
+test_l_data <- data_filtered_reduced[-train_ind,]
 
 # Fitting the model 
 
-logit_model <- glm(is_delayed ~ ., family = binomial(), data = data_filtered)
+logit_model <- glm(is_delayed ~ ., family = binomial(), data = data_filtered_reduced)
 
 test_l_data$pred <- predict(logit_model, test_l_data, type = "response")
   
+# Logistic Model Summary 
 
+summary(logit_model)
+
+# Prediction classes
+
+test_l_data$pred_class <- ifelse(test_l_data$pred >=0.5,1,0)
   
-  
+# Confusion matrix 
+
+confusionMatrix(factor(test_l_data$pred_class), 
+                factor(test_l_data$is_delayed))
+table(train_l_data$is_delay)  
+
+# AIC
+
+AIC(logit_model)
+
+# Significant factors 
+
+# select rows with p-value < 0.05
+coef_table <- summary(logit_model)$coefficients
+signif_vars <- rownames(coef_table)[coef_table[,4] < 0.05]
+signif_vars
+
+# 2) Lasso Logistic Regression 
+
