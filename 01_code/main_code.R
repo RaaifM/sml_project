@@ -50,7 +50,7 @@ drop_column_names <- c("fl_date","op_carrier_fl_num",
                        "cancellation_code","actual_elapsed_time",
                        "air_time", "carrier_delay","weather_delay",
                        "nas_delay","security_delay","late_aircraft_delay",
-                       "crs_arr_time","arr_time")
+                       "crs_arr_time","arr_time","year")
 
 data_filtered <- data_filtered %>%
   select(-all_of(drop_column_names))
@@ -70,4 +70,39 @@ table(data_filtered$is_delayed)
 data_filtered <- data_filtered %>%
   select(-c("cancelled","diverted","arr_delay"))
 
+# 7) Make sure the data reads as factor where relevant 
+
+# Converting the month, day_of_month, day_of_week, op_unique_carrier, origin, dest into factors
+
+data_filtered$month <- factor(data_filtered$month)
+data_filtered$day_of_month <- factor(data_filtered$day_of_month)
+data_filtered$day_of_week <- factor(data_filtered$day_of_week)
+data_filtered$op_unique_carrier <- factor(data_filtered$op_unique_carrier)
+data_filtered$origin <- factor(data_filtered$origin)
+data_filtered$dest <- factor(data_filtered$dest)
+
+# 8) If working with only 1-carrier data 
+
+data_filtered <- data_filtered %>%
+  select(-op_unique_carrier)
+
+
 # II) SUITABLE PREDICTIVE MODELS
+
+# 1) Logistic regression model (link = logit)
+
+# Splitting the data into training and testing sets 
+
+train_ind <- sample(nrow(data_filtered), size = 0.7*nrow(data_filtered))
+train_l_data <- data_filtered[train_ind,]
+test_l_data <- data_filtered[-train_ind,]
+
+# Fitting the model 
+
+logit_model <- glm(is_delayed ~ ., family = binomial(), data = data_filtered)
+
+test_l_data$pred <- predict(logit_model, test_l_data, type = "response")
+  
+
+  
+  
