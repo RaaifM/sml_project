@@ -16,6 +16,7 @@ library("rpart.plot")
 library("randomForest")
 library("MLmetrics")
 library("ada")
+library("gt")
 
 # 2) Reading the data
 
@@ -643,3 +644,89 @@ spec_ada
 
 # F1
 f1_ada
+
+# III) PRESENTATION SUPPLEMENTS
+
+# a) logistic regression 
+
+results_table <- tibble(
+  Model = c(
+    "Logistic (Baseline)",
+    "Weighted Logistic",
+    "Weighted Lasso",
+    "CART (Pruned)",
+    "CART (Lasso Features)",
+    "Random Forest",
+    "AdaBoost"
+  ),
+  Accuracy = c(
+    acc,
+    acc_logit_w,
+    acc_lasso_w,
+    acc_tree,
+    acc_lasso_tree,
+    acc_rf,
+    acc_ada
+  ),
+  Sensitivity = c(
+    sens,
+    sens_logit_w,
+    sens_lasso_w,
+    sens_tree,
+    sens_lasso_tree,
+    sens_rf,
+    sens_ada
+  ),
+  Specificity = c(
+    spec,
+    spec_logit_w,
+    spec_lasso_w,
+    spec_tree,
+    spec_lasso_tree,
+    spec_rf,
+    spec_ada
+  ),
+  F1_Score = c(
+    f1,
+    f1_logit_w,
+    f1_lasso_w,
+    f1_tree,
+    f1_lasso_tree,
+    f1_rf,
+    f1_ada
+  )
+)
+
+results_table
+
+gt_table <- results_table %>%
+  # Round all numeric columns to 4 decimal places for a cleaner look
+  mutate(across(where(is.numeric), ~ round(.x, 4))) %>%
+  gt() %>%
+  # Add a title
+  tab_header(
+    title = "Model Performance Comparison",
+    subtitle = "Metrics for Flight Delay Prediction"
+  ) %>%
+  # Highlight the best F1-Score
+  tab_style(
+    style = cell_fill(color = "lightblue"),
+    locations = cells_body(
+      columns = F1_Score,
+      rows = F1_Score == max(F1_Score, na.rm = TRUE)
+    )
+  )
+
+# Print the 'gt' table to the RStudio Viewer pane
+print(gt_table)
+
+png(filename = "lasso_cv_plot.png", 
+    width = 800, 
+    height = 600, 
+    bg = "transparent")
+
+# 2. Create your plot
+plot(cv_lasso_w_model)
+
+# 3. Close the device and save the file
+dev.off()
