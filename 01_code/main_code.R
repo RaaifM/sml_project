@@ -451,23 +451,22 @@ if (length(selected_original_vars) > 0) {
 
 
 acc_lasso_tree<- cm_lasso_tree$overall['Accuracy']
-sens_rf <- cm_rf$byClass['Sensitivity']
-spec_rf <- cm_rf$byClass['Specificity']
+sens_lasso_tree <- cm_lasso_tree$byClass['Sensitivity']
+spec_lasso_tree <- cm_lasso_tree$byClass['Specificity']
 f1_lasso_tree <- cm_lasso_tree$byClass['F1']
 
 # Accuracy = (TP + TN) / (TP + TN + FP + FN)
 # This is misleading for imbalanced data 
-acc_rf
+acc_lasso_tree
 
 # Sensitivity Correctly predict delays (Recall): TP / (TP + FN)
-sens_rf
+sens_lasso_tree
 
 # Specificity Correctly predict on-time (True Negative Rate (TNR)): TN / (TN + FP)
-spec_rf
+spec_lasso_tree
 
 # F1
-f1_rf
-
+f1_lasso_tree
 
 
 # 6) Random Forest 
@@ -505,8 +504,10 @@ rf_tuned_model <- train(
 )
 
 # optimal m_try = 5
+# Higher AUC is better 
 print(rf_tuned_model)
-plot(rf_tuned_model)
+m_try_plot <- plot(rf_tuned_model,main = "AUC vs. Number of Predictors (m_try)", 
+     xlab = "Number of Selected Predictors (m_try)")
 
 # Predictions 
 rf_preds <- predict(rf_tuned_model, newdata = test_rf_data)
