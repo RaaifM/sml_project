@@ -13,6 +13,8 @@ library("caret")
 library("glmnet")
 library("rpart")
 library("rpart.plot")
+library("randomForest")
+library("MLmetrics")
 
 # 2) Reading the data
 
@@ -313,7 +315,7 @@ spec_lasso_w
 # F1
 f1_lasso_w
 
-# 4) Single Classification Tree
+# 4) Single Classification Tree - With all variables 
 
 # Training and Testing data 
 train_ind <- sample(nrow(data_filtered_reduced), size = 0.7*nrow(data_filtered_reduced))
@@ -384,4 +386,160 @@ spec_tree
 # F1
 f1_tree
 
+# 5) Single Classification tree - with lasso feature selection
+
+# coefficients from best Lasso model
+model_coefs <- coef(cv_lasso_w_model, s = best_lambda)
+
+# Names of all variables with non-zero coefficients
+non_zero_coefs_matrix <- as.matrix(model_coefs)
+non_zero_vars_encoded <- rownames(non_zero_coefs_matrix)[non_zero_coefs_matrix[, 1] != 0]
+
+# Remove intercept term from the list
+non_zero_predictors_encoded <- non_zero_vars_encoded[non_zero_vars_encoded != "(Intercept)"]
+print(non_zero_predictors_encoded)
+
+# Map encoded names back to original variable names
+
+# original predictor column names from your training data
+original_predictors <- setdiff(colnames(train_lasso_w_data), "is_delayed")
+
+selected_original_vars <- c()
+for (var in original_predictors) {
+  if (any(startsWith(non_zero_predictors_encoded, var))) {
+    selected_original_vars <- c(selected_original_vars, var)
+  }
+}
+
+# The lasso model drops the column of "day_group" and "crs_elapsed_time"
+print(selected_original_vars)
+
+
+# if at least one variable selected in "selected_original_vars"
+if (length(selected_original_vars) > 0) {
+  tree_formula_str <- paste("is_delayed ~", paste(selected_original_vars, collapse = " + "))
+  tree_formula <- as.formula(tree_formula_str)
+  
+  print(paste("Building tree with formula:", tree_formula_str))
+  
+  tree_model_lasso_vars <- rpart(
+    formula = tree_formula,
+    data = train_lasso_w_data,
+    method = "class",
+    weights = class_weights # Re-using your weights
+  )
+  
+  # 9. Display and plot the new, simpler tree
+  print("Summary of the new tree (with Lasso variables):")
+  printcp(tree_model_lasso_vars)
+  
+  rpart.plot(tree_model_lasso_vars, main = "Tree with Lasso-Selected Variables")
+  
+  tree_preds_lasso_vars <- predict(tree_model_lasso_vars, 
+                                   newdata = test_lasso_w_data, 
+                                   type = "class")
+  
+  tree_preds_factor <- factor(tree_preds_lasso_vars, levels = c("0", "1"))
+  test_actual_factor <- factor(test_lasso_w_data$is_delayed, levels = c("0", "1"))
+  
+  cm_lasso_tree <- confusionMatrix(tree_preds_factor, test_actual_factor, positive = "1")
+  
+} else {
+  print("Lasso selected no variables (lambda.1se might be too strict).")
+  print("Try using cv_lasso_w_model$lambda.min instead.")
+}
+
+
+acc_lasso_tree<- cm_lasso_tree$overall['Accuracy']
+sens_rf <- cm_rf$byClass['Sensitivity']
+spec_rf <- cm_rf$byClass['Specificity']
+f1_lasso_tree <- cm_lasso_tree$byClass['F1']
+
+# Accuracy = (TP + TN) / (TP + TN + FP + FN)
+# This is misleading for imbalanced data 
+acc_rf
+
+# Sensitivity Correctly predict delays (Recall): TP / (TP + FN)
+sens_rf
+
+# Specificity Correctly predict on-time (True Negative Rate (TNR)): TN / (TN + FP)
+spec_rf
+
+# F1
+f1_rf
+
+
+
+# 6) Random Forest 
+
+train_ind <- sample(nrow(data_filtered_reduced), size = 0.7*nrow(data_filtered_reduced))
+train_rf_data <- data_filtered_reduced[train_ind,]
+test_rf_data <- data_filtered_reduced[-train_ind,]
+
+train_control <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = TRUE,
+  sampling = "down",      
+  summaryFunction = prSummary, 
+  classProbs = TRUE 
+)
+
+grid <- expand.grid(
+  .mtry = c(5, 10, 20)
+)
+
+# Making sure the dependent isn't a number 
+train_rf_data$is_delayed <- ifelse(train_rf_data$is_delayed == 1, "Delay", "NoDelay")
+train_rf_data$is_delayed <- as.factor(train_rf_data$is_delayed)
+
+# Hyper-parameter optimization for m_try 
+rf_tuned_model <- train(
+  is_delayed ~ .,
+  data = train_rf_data,
+  method = "rf",
+  trControl = train_control,
+  tuneGrid = grid,
+  metric = "F1", 
+  ntree = 100
+)
+
+# optimal m_try = 5
+print(rf_tuned_model)
+plot(rf_tuned_model)
+
+# Predictions 
+rf_preds <- predict(rf_tuned_model, newdata = test_rf_data)
+
+# Re-converting back the dependent variable to binary
+preds_numeric <- ifelse(rf_preds == "Delay", 1, 0)
+
+factor_levels <- c("0", "1")
+
+preds_factor <- factor(preds_numeric, levels = factor_levels)
+ref_factor <- factor(test_rf_data$is_delayed, levels = factor_levels)
+
+cm_rf <- caret::confusionMatrix(data = preds_factor, 
+                                reference = ref_factor, 
+                                positive = "1")
+
+cm_rf
+
+acc_rf<- cm_rf$overall['Accuracy']
+sens_rf <- cm_rf$byClass['Sensitivity']
+spec_rf <- cm_rf$byClass['Specificity']
+f1_rf <- cm_rf$byClass['F1']
+
+# Accuracy = (TP + TN) / (TP + TN + FP + FN)
+# This is misleading for imbalanced data 
+acc_rf
+
+# Sensitivity Correctly predict delays (Recall): TP / (TP + FN)
+sens_rf
+
+# Specificity Correctly predict on-time (True Negative Rate (TNR)): TN / (TN + FP)
+spec_rf
+
+# F1
+f1_rf
 
