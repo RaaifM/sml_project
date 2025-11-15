@@ -15,6 +15,7 @@ library("rpart")
 library("rpart.plot")
 library("randomForest")
 library("MLmetrics")
+library("ada")
 
 # 2) Reading the data
 
@@ -492,6 +493,10 @@ grid <- expand.grid(
 train_rf_data$is_delayed <- ifelse(train_rf_data$is_delayed == 1, "Delay", "NoDelay")
 train_rf_data$is_delayed <- as.factor(train_rf_data$is_delayed)
 
+# New
+test_rf_data$is_delayed <- ifelse(test_rf_data$is_delayed == 1, "Delay", "NoDelay")
+test_rf_data$is_delayed <- as.factor(test_rf_data$is_delayed)
+
 # Hyper-parameter optimization for m_try 
 rf_tuned_model <- train(
   is_delayed ~ .,
@@ -506,7 +511,7 @@ rf_tuned_model <- train(
 # optimal m_try = 5
 # Higher AUC is better 
 print(rf_tuned_model)
-m_try_plot <- plot(rf_tuned_model,main = "AUC vs. Number of Predictors (m_try)", 
+plot(rf_tuned_model,main = "AUC vs. Number of Predictors (m_try)", 
      xlab = "Number of Selected Predictors (m_try)")
 
 # Predictions 
@@ -514,11 +519,12 @@ rf_preds <- predict(rf_tuned_model, newdata = test_rf_data)
 
 # Re-converting back the dependent variable to binary
 preds_numeric <- ifelse(rf_preds == "Delay", 1, 0)
+ref_factor <- ifelse(test_rf_data$is_delayed == "Delay",1,0)
 
 factor_levels <- c("0", "1")
 
 preds_factor <- factor(preds_numeric, levels = factor_levels)
-ref_factor <- factor(test_rf_data$is_delayed, levels = factor_levels)
+ref_factor <- factor(ref_factor, levels = factor_levels)
 
 cm_rf <- caret::confusionMatrix(data = preds_factor, 
                                 reference = ref_factor, 
@@ -544,3 +550,96 @@ spec_rf
 # F1
 f1_rf
 
+
+# 1. Calculate the variable importance
+importance <- varImp(rf_tuned_model, scale = FALSE)
+
+# 2. Plot the importance
+plot(importance, top = 5, main = "Variable Importance for Delay Prediction")
+
+
+# 7) Ada Boost 
+
+train_ind <- sample(nrow(data_filtered_reduced), size = 0.7*nrow(data_filtered_reduced))
+train_boost_data <- data_filtered_reduced[train_ind,]
+test_boost_data <- data_filtered_reduced[-train_ind,]
+
+
+# Making sure the decision variable is a factor 
+train_boost_data$is_delayed <- ifelse(train_boost_data$is_delayed == 1, "Delayed", "OnTime")
+test_boost_data$is_delayed <- ifelse(test_boost_data$is_delayed == 1, "Delayed", "OnTime")
+
+train_boost_data$is_delayed <- factor(train_boost_data$is_delayed, 
+                                      levels = c("Delayed", "OnTime"))
+test_boost_data$is_delayed <- factor(test_boost_data$is_delayed, 
+                                     levels = c("Delayed", "OnTime"))
+is.factor(train_boost_data$is_delayed)
+
+boost_control <- trainControl(
+  method = "cv",
+  number = 5,
+  summaryFunction = prSummary,
+  classProbs = TRUE,
+  verboseIter = TRUE,
+  sampling = "up"  # <-- ADD THIS LINE to up-sample
+)
+
+
+boost_grid <- expand.grid(
+  iter = c(50, 100),    
+  maxdepth = c(2, 3),    
+  nu = c(0.1, 0.05)         
+)
+
+ada_model <- train(
+  is_delayed ~ .,
+  data = train_boost_data,
+  method = "ada",              # Specify the AdaBoost method
+  trControl = boost_control,     # Use our cross-validation settings
+  tuneGrid = boost_grid,         # Use our parameter grid
+  metric = "F1"
+)
+
+# Looking at the results 
+print(ada_model)
+plot(ada_model)
+
+# Top 5 important variables according to ada_boost
+importance <- varImp(ada_model, scale = FALSE)
+plot(importance, top = 5, main = "Top 5 Variables (AdaBoost)")
+
+# Predictions 
+predictions <- predict(ada_model, newdata = test_boost_data)
+
+# Re-converting back the dependent variable to binary
+preds_numeric <- ifelse(predictions == "Delayed", 1, 0)
+ref_factor <- ifelse(test_boost_data$is_delayed == "Delayed",1,0)
+
+factor_levels <- c("0", "1")
+
+preds_factor <- factor(preds_numeric, levels = factor_levels)
+ref_factor <- factor(ref_factor, levels = factor_levels)
+
+cm_ada_boost <- caret::confusionMatrix(data = preds_factor, 
+                                reference = ref_factor, 
+                                positive = "1")
+
+cm_ada_boost
+
+acc_ada<- cm_ada_boost$overall['Accuracy']
+sens_ada <- cm_ada_boost$byClass['Sensitivity']
+spec_ada <- cm_ada_boost$byClass['Specificity']
+f1_ada <- cm_ada_boost$byClass['F1']
+
+# Accuracy = (TP + TN) / (TP + TN + FP + FN)
+# This is misleading for imbalanced data 
+acc_ada
+
+# Sensitivity Correctly predict delays (Recall): TP / (TP + FN)
+sens_ada
+
+# Specificity Correctly predict on-time (True Negative Rate (TNR)): TN / (TN + FP)
+spec_ada
+
+# F1
+f1_ada
